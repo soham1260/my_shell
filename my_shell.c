@@ -4,11 +4,22 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #define MAX_INPUT_SIZE 1024
 #define MAX_TOKEN_SIZE 64
 #define MAX_NUM_TOKENS 64
 #define MAX_BG_PROCS 64
+
+int fg_gid=-1;
+
+void sigint_handler(int signo) 
+{
+    if (fg_gid > 0) 
+    {
+        kill(-fg_gid, SIGINT);
+    }
+}
 
 char **tokenize(char *line)
 {
@@ -39,6 +50,9 @@ char **tokenize(char *line)
 
 
 int main(int argc, char* argv[]) {
+
+    signal(SIGINT, sigint_handler);
+
 	char  line[MAX_INPUT_SIZE];            
 	char  **tokens;              
 	int i;
@@ -51,7 +65,9 @@ int main(int argc, char* argv[]) {
 
     int bg_count = 0;
 
-	while(1) {			
+	while(1) {
+
+/////////////////////////////////////////////////////////////////////////////////
         
         for (int i = 0; i < MAX_BG_PROCS; i++) 
         {
@@ -65,6 +81,7 @@ int main(int argc, char* argv[]) {
                 bg_count--;
             }
         }
+        
 /////////////////////////////////////////////////////////////////////////////////
  
 		bzero(line, sizeof(line));
@@ -85,6 +102,26 @@ int main(int argc, char* argv[]) {
 
 		line[strlen(line)] = '\n';
 		tokens = tokenize(line);
+
+/////////////////////////////////////////////////////////////////////////////////
+
+        if (tokens[0] != NULL && strcmp(tokens[0], "exit") == 0) 
+        {
+            for(int i=0;i<MAX_BG_PROCS;i++) 
+            {
+                if (bg_pids[i] != -1 && kill(bg_pids[i], 0) == 0) kill(bg_pids[i], SIGTERM);
+            }
+            for(int i=0;i<MAX_BG_PROCS;i++) 
+            {
+                if (bg_pids[i] != -1) waitpid(bg_pids[i], NULL, 0);
+            }
+            for (int i = 0; tokens[i] != NULL; i++) 
+            {
+                free(tokens[i]);
+            }
+            free(tokens);
+            exit(0);
+        }
 
 /////////////////////////////////////////////////////////////////////////////////
 
@@ -137,6 +174,11 @@ int main(int argc, char* argv[]) {
         }
         else if(pid == 0)
         {
+            if (setpgid(0, 0) == -1) 
+            {
+                printf("setpgid");
+                exit(1);
+            }
             if(execvp(tokens[0],tokens) == -1)
             {
                 printf("execvp error : Invalid Command\n");
@@ -145,13 +187,16 @@ int main(int argc, char* argv[]) {
         }
         else
         {
+            setpgid(pid, pid);
             if (!background) 
             {
+                fg_gid = pid;
                 int status;
                 waitpid(pid, &status, 0);
                 // if (WIFEXITED(status)) {
                 //     printf("EXITSTATUS: %d\n", WEXITSTATUS(status));
                 // }
+                fg_gid = -1;
             } 
             else 
             {
