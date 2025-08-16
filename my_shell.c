@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
 
 	while(1) {
 
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// Reap bg processes
         
         for (int i = 0; i < MAX_BG_PROCS; i++) 
         {
@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
             }
         }
         
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// get pwd of shell
  
 		bzero(line, sizeof(line));
 
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
             printf("<getcwd error>%s $ ", cwd);
         }
         
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// get new command and tokenize
 
 		scanf("%[^\n]", line);
 		getchar();
@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
 		line[strlen(line)] = '\n';
 		tokens = tokenize(line);
 
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// handle exit command
 
         if (tokens[0] != NULL && strcmp(tokens[0], "exit") == 0) 
         {
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
             exit(0);
         }
 
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// handle cd command
 
         if (tokens[0] != NULL && strcmp(tokens[0], "cd") == 0) 
         {
@@ -139,7 +139,43 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-/////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////// handle &&
+
+        int i = 0;
+        int num_serial_commands = 0;
+
+        while(tokens[i] != NULL)
+        {
+            if(strcmp(tokens[i],"&&") == 0) num_serial_commands++;
+            i++;
+        }
+        
+        char*** commands = NULL;
+        if(num_serial_commands)
+        {
+            num_serial_commands++;
+            commands = (char ***)malloc(num_serial_commands * sizeof(char **));
+            i=0;
+            int j=0;
+            while(i<num_serial_commands)
+            {
+                int k=0;
+                char **individual_command = (char **)malloc(MAX_NUM_TOKENS * sizeof(char *));
+                while(tokens[j] != NULL && strcmp(tokens[j],"&&") != 0)
+                {
+                    char *cmd_token = (char *)malloc(MAX_TOKEN_SIZE * sizeof(char));
+                    strcpy(cmd_token,tokens[j]);
+                    individual_command[k++] = cmd_token;
+                    j++;
+                }
+                individual_command[k] = NULL;
+                commands[i]=individual_command;
+                if (tokens[j] != NULL && strcmp(tokens[j], "&&") == 0) j++;
+                i++;
+            }
+        }
+
+///////////////////////////////////////////////////////////////////////////////// check & for bg execution
 
         int background = 0;
         int last_token = 0;
@@ -151,8 +187,8 @@ int main(int argc, char* argv[]) {
             free(tokens[last_token - 1]);
             tokens[last_token - 1] = NULL;
         }
-
-/////////////////////////////////////////////////////////////////////////////////
+        
+///////////////////////////////////////////////////////////////////////////////// command execution
 
         if (background && bg_count == MAX_BG_PROCS) 
         {
@@ -166,54 +202,99 @@ int main(int argc, char* argv[]) {
             continue;
         }
         
-        int pid = fork();
-    
-        if(pid < 0)
+
+///////////////////////////////////////////////////////////////////////////////// command execution serial
+
+        if(num_serial_commands)
         {
-            printf("Error forking");
-        }
-        else if(pid == 0)
-        {
-            if (setpgid(0, 0) == -1) 
+            for (int c = 0; c < num_serial_commands; c++) 
             {
-                printf("setpgid");
-                exit(1);
+                int pid = fork();
+                if (pid == 0) 
+                {
+                    if (setpgid(0, 0) == -1) 
+                    {
+                        printf("setpgid error");
+                        exit(1);
+                    }
+                    if(execvp(commands[c][0], commands[c]) == -1)
+                    {
+                        printf("execvp error : Invalid Command\n");
+                        exit(1);
+                    }
+                }
+                else 
+                {
+                    fg_gid = pid;
+                    setpgid(pid, pid);
+                    int status;
+                    waitpid(pid, &status, 0);
+                    fg_gid = -1;
+                }
             }
-            if(execvp(tokens[0],tokens) == -1)
+            for (int c = 0; c < num_serial_commands; c++) 
             {
-                printf("execvp error : Invalid Command\n");
-                exit(1);
+                for (int k = 0; commands[c][k] != NULL; k++) 
+                {
+                    free(commands[c][k]);
+                }
+                free(commands[c]);
             }
+            free(commands);
         }
+
+///////////////////////////////////////////////////////////////////////////////// command execution normal
+
         else
         {
-            setpgid(pid, pid);
-            if (!background) 
+            int pid = fork();
+    
+            if(pid < 0)
             {
-                fg_gid = pid;
-                int status;
-                waitpid(pid, &status, 0);
-                // if (WIFEXITED(status)) {
-                //     printf("EXITSTATUS: %d\n", WEXITSTATUS(status));
-                // }
-                fg_gid = -1;
-            } 
-            else 
+                printf("Error forking");
+            }
+            else if(pid == 0)
             {
-                printf("[Background] PID: %d\n", pid);
-                int i=0;
-                while(i<MAX_BG_PROCS)
+                if (setpgid(0, 0) == -1) 
                 {
-                    if (bg_pids[i] == -1)
+                    printf("setpgid error");
+                    exit(1);
+                }
+                if(execvp(tokens[0],tokens) == -1)
+                {
+                    printf("execvp error : Invalid Command\n");
+                    exit(1);
+                }
+            }
+            else
+            {
+                setpgid(pid, pid);
+                if (!background) 
+                {
+                    fg_gid = pid;
+                    int status;
+                    waitpid(pid, &status, 0);
+                    fg_gid = -1;
+                } 
+                else 
+                {
+                    printf("[Background] PID: %d\n", pid);
+                    int i=0;
+                    while(i<MAX_BG_PROCS)
                     {
-                        bg_pids[i] = pid;
-                        bg_count++;
-                        break;
+                        if (bg_pids[i] == -1)
+                        {
+                            bg_pids[i] = pid;
+                            bg_count++;
+                            break;
+                        }
+                        i++;
                     }
-                    i++;
                 }
             }
         }
+
+///////////////////////////////////////////////////////////////////////////////// free memory    
         
 	 	for(i=0;tokens[i]!=NULL;i++){
 	 		free(tokens[i]);
