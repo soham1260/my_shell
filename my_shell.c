@@ -175,6 +175,41 @@ int main(int argc, char* argv[]) {
             }
         }
 
+///////////////////////////////////////////////////////////////////////////////// handle &&&
+
+        i = 0;
+        int num_parallel_commands = 0;
+
+        while(tokens[i] != NULL)
+        {
+            if(strcmp(tokens[i],"&&&") == 0) num_parallel_commands++;
+            i++;
+        }
+        
+        if(num_parallel_commands)
+        {
+            num_parallel_commands++;
+            commands = (char ***)malloc(num_parallel_commands * sizeof(char **));
+            i=0;
+            int j=0;
+            while(i<num_parallel_commands)
+            {
+                int k=0;
+                char **individual_command = (char **)malloc(MAX_NUM_TOKENS * sizeof(char *));
+                while(tokens[j] != NULL && strcmp(tokens[j],"&&&") != 0)
+                {
+                    char *cmd_token = (char *)malloc(MAX_TOKEN_SIZE * sizeof(char));
+                    strcpy(cmd_token,tokens[j]);
+                    individual_command[k++] = cmd_token;
+                    j++;
+                }
+                individual_command[k] = NULL;
+                commands[i]=individual_command;
+                if (tokens[j] != NULL && strcmp(tokens[j], "&&&") == 0) j++;
+                i++;
+            }
+        }
+
 ///////////////////////////////////////////////////////////////////////////////// check & for bg execution
 
         int background = 0;
@@ -235,6 +270,66 @@ int main(int argc, char* argv[]) {
             for (int c = 0; c < num_serial_commands; c++) 
             {
                 for (int k = 0; commands[c][k] != NULL; k++) 
+                {
+                    free(commands[c][k]);
+                }
+                free(commands[c]);
+            }
+            free(commands);
+        }
+
+///////////////////////////////////////////////////////////////////////////////// command execution parallel
+
+        else if(num_parallel_commands)
+        {
+            int pids[num_parallel_commands];
+
+            for (int c = 0; c < num_parallel_commands; c++) 
+            {
+                int pid = fork();
+                if(pid == 0) 
+                {
+                    if(fg_gid == -1) 
+                    {
+                        if (setpgid(0, 0) == -1) 
+                        {
+                            perror("setpgid error");
+                            exit(1);
+                        }
+                    }
+                    else  
+                    {
+                        if(setpgid(0, fg_gid) == -1)
+                        {
+                            printf("setpgid error");
+                            exit(1);
+                        }
+                    }
+                    if(execvp(commands[c][0], commands[c]) == -1)
+                    {
+                        printf("execvp error : Invalid Command\n");
+                        exit(1);
+                    }
+                }
+                else 
+                {
+                    if (fg_gid == -1) 
+                    {
+                        fg_gid = pid;
+                    }
+                    setpgid(pid, fg_gid);
+                    pids[c] = pid;
+                }
+            }
+            int status;
+            for(int c = 0; c < num_parallel_commands; c++) 
+            {
+                waitpid(pids[c], &status, 0);
+            }
+            fg_gid = -1;
+            for(int c = 0; c < num_parallel_commands; c++) 
+            {
+                for(int k = 0; commands[c][k] != NULL; k++) 
                 {
                     free(commands[c][k]);
                 }
